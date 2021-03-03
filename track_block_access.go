@@ -95,7 +95,7 @@ func (dbbs *PgBlockstore) FlushAccessLogs(contextEpoch abi.ChainEpoch, contextTi
 			if _, err := dbbs.dbPool.CopyFrom(
 				context.Background(),
 				pgx.Identifier{dbbs.instanceNamespace, "datablocks_accesslog"},
-				[]string{"access_wall_time", "block_ordinal", "access_type", "access_count", "context_epoch", "context_tipset_rdinal"},
+				[]string{"access_wall_time", "block_ordinal", "access_type", "access_count", "context_epoch", "context_tipset_ordinal"},
 				pgx.CopyFromRows(detailedLogs),
 			); err != nil {
 				dbbs.maybeLogUnexpectedErrorf("failure writing detailed access logs for epoch/tipsetOrdinal %d/%d: %s", contextEpoch, contextTipsetDbOrdinal, err)
