@@ -153,6 +153,6 @@ func (sb *StoredBlock) extractLinks() ([]cid.Cid, error) {
 		return ret, nil
 
 	default:
-		return nil, fmt.Errorf("not-yet-supported chain-codec 0x%x (%d)", codec, codec)
+		return nil, fmt.Errorf("not-yet-supported chain-codec 0x%X (%d)", codec, codec)
 	}
 }

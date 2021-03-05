@@ -361,7 +361,7 @@ func (dbbs *PgBlockstore) dbStore(blks []ipfsblock.Block) (err error) {
 			)
 
 			if !bytes.Equal(compressedData[0:4], zstdMagic) {
-				log.Panicf("zstandard compressor produced stream prefixed by %x instead of the expected %x", compressedData[0:4], zstdMagic)
+				log.Panicf("zstandard compressor produced stream prefixed by 0x%X instead of the expected 0x%X", compressedData[0:4], zstdMagic)
 			}
 
 			// check if compression is worthwhile

@@ -413,15 +413,21 @@ func (dbbs *PgBlockstore) namespacedDDL() []string {
 
 		// FIXME - this may need to be adjusted to do actual weight analysis
 		// instead of relying on is_current_head (which is noisy)
-		// We do have sufficient data within the database to make this decision
+		// We *do* have sufficient data within the database to make this decision
 		// without involving lotus, but it will likely be rather expensive
+		//
+		// Instead a cop-out: always return the tipset of the *previous* epoch
 		`
 		CREATE OR REPLACE VIEW current_tipset AS
 			SELECT (ROW_NUMBER() OVER())-1 AS pos, * FROM (
-				SELECT UNNEST( tipset_key ) AS base32_cid, UNNEST( tipset_cids ) AS raw_cid, epoch
-					FROM fil_common_base.tipsets t
-					JOIN tipsets_visited tv
-						ON t.tipset_ordinal = tv.tipset_ordinal AND tv.is_current_head
+				SELECT UNNEST( pt.tipset_key ) AS base32_cid, UNNEST( pt.tipset_cids ) AS raw_cid, pt.epoch
+					FROM tipsets_visited tv
+					JOIN fil_common_base.tipsets t
+						ON tv.is_current_head AND tv.tipset_ordinal = t.tipset_ordinal
+					JOIN fil_common_base.states ps
+						ON t.parent_stateroot_cid = ps.stateroot_cid
+					JOIN fil_common_base.tipsets pt
+						ON ps.applied_tipset_cids = pt.tipset_cids
 			) virt
 		`,
 

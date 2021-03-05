@@ -428,7 +428,7 @@ func (dbbs *PgBlockstore) getCidOrdinals(ctx context.Context, tx pgx.Tx, origCid
 		if cached, found := dbbs.lru.Peek(c); found {
 			sb := cached.(*StoredBlock)
 			if sb.dbBlockOrdinal == nil {
-				return nil, fmt.Errorf("unexpected nil-ordinal in LRU cached entry %s (%x)", c.String(), c.KeyString())
+				return nil, fmt.Errorf("unexpected nil-ordinal in LRU cached entry %s (0x%X)", c.String(), c.KeyString())
 			}
 
 			ordinalsDict[c.KeyString()] = *sb.dbBlockOrdinal
@@ -527,7 +527,7 @@ func (dbbs *PgBlockstore) getCidOrdinals(ctx context.Context, tx pgx.Tx, origCid
 			cidList.RemoveKeyString(k)
 		}
 		cidList.ForEach(func(c cid.Cid) error {
-			log.Errorf("missing ordinal for %s (%x)", c.String(), c.KeyString())
+			log.Errorf("missing ordinal for %s (0x%X)", c.String(), c.KeyString())
 			return nil
 		})
 		return nil, fmt.Errorf(

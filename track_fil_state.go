@@ -39,18 +39,18 @@ type DestructuredFilTipSetHeaderBlock struct {
 
 // CurrentFilTipSetKeyBytes queries the configured instance namespace and
 // retrieves the epoch and ordered CIDs of the most-recently Visit()-ed tipset.
-func (dbbs *PgBlockstore) CurrentFilTipSetKeyBytes(ctx context.Context) ([]byte, abi.ChainEpoch, error) {
+func (dbbs *PgBlockstore) CurrentFilTipSetKey(ctx context.Context) ([]cid.Cid, abi.ChainEpoch, error) {
 
 	if dbbs.InstanceNamespace() == "" {
-		return nil, -1, xerrors.New("unable to invoke CurrentFilTipSet without a previously configured instance namespace")
+		return nil, -1, xerrors.New("unable to invoke CurrentFilTipSetKey without a previously configured instance namespace")
 	}
 
 	var cidBytes []byte
-	var epoch abi.ChainEpoch
+	var epoch int32
 	err := dbbs.PgxPool().QueryRow(
 		ctx,
 		fmt.Sprintf(`SELECT STRING_AGG( raw_cid, '' ), epoch FROM %s.current_tipset GROUP BY epoch`, dbbs.InstanceNamespace()),
-	).Scan(&cidBytes, epoch)
+	).Scan(&cidBytes, &epoch)
 
 	if err == pgx.ErrNoRows {
 		return nil, -1, nil
@@ -58,9 +58,24 @@ func (dbbs *PgBlockstore) CurrentFilTipSetKeyBytes(ctx context.Context) ([]byte,
 		return nil, -1, err
 	}
 
-	// copy to avoid retaining pgx'es 8k buffer
-	// https://github.com/jackc/pgx/issues/845#issuecomment-705550012
-	return append(make([]byte, 0, len(cidBytes)), cidBytes...), epoch, nil
+	cids := make([]cid.Cid, 0, (len(cidBytes)+37)/38) // assume 38-byte long cids
+	for len(cidBytes) > 0 {
+		l, c, err := cid.CidFromBytes(cidBytes)
+		if err != nil {
+			return nil, -1, err
+		}
+		cids = append(cids, c)
+		cidBytes = cidBytes[l:]
+	}
+
+	if len(cids) == 0 {
+		return nil, -1, xerrors.Errorf(
+			"impossibly(?) ended up with no CIDs from an otherwise successful query against 'current_tipset' resulting in 0x%X",
+			cidBytes,
+		)
+	}
+
+	return cids, abi.ChainEpoch(epoch), nil
 }
 
 // StoreFilTipSetVisit records the timing and potentially adjust orphan lists
@@ -149,7 +164,7 @@ func (dbbs *PgBlockstore) StoreFilTipSetVisit(ctx context.Context, tsDbOrdinal *
 								FROM fil_common_base.states s
 								JOIN fil_common_base.tipsets t
 									ON t.tipset_ordinal = $1 AND s.stateroot_cid = t.parent_stateroot_cid
-						UNION
+						UNION ALL
 							SELECT parent_state.state_ordinal, parent_state.applied_tipset_cids, live_segment.depth+1 AS depth
 								FROM live_segment
 								JOIN fil_common_base.tipsets parent_tipset
