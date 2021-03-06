@@ -71,6 +71,10 @@ func (dbbs *PgBlockstore) FlushAccessLogs(contextEpoch abi.ChainEpoch, contextTi
 		return xerrors.New("Invoking FLushAccessLogs() on a namespace-less annotated blockstore is not possible")
 	}
 
+	if !dbbs.isWritable {
+		return xerrors.New("unable to FLushAccessLogs() on a read-only store")
+	}
+
 	dbbs.accessLogsMu.Lock()
 	defer dbbs.accessLogsMu.Unlock()
 

@@ -217,7 +217,7 @@ func (dbbs *PgBlockstore) PrecacheByOrdinal(ctx context.Context, ordinals []int6
 // Closes the supplied tx on exit
 func (dbbs *PgBlockstore) allKeysFetchWorker(ctx context.Context, cursorTxToBeClosed pgx.Tx, cursorName string, outChan chan<- cid.Cid) {
 
-	// captured by the defer(): DO NOT ... err :=  ...
+	// captured by the defer() below: DO NOT ... err :=  ...
 	var err error
 	var cidRows pgx.Rows
 	var c cid.Cid
@@ -294,6 +294,10 @@ func (dbbs *PgBlockstore) BackfillBlockLinks(ctx context.Context, storedBlocks [
 		return
 	}
 
+	if !dbbs.isWritable {
+		return xerrors.New("unable to BackfillBlockLinks() on a read-only store")
+	}
+
 	var allReferencedCids synccid.Set
 
 	// asynchronously extract links from each individual block
@@ -325,7 +329,7 @@ func (dbbs *PgBlockstore) BackfillBlockLinks(ctx context.Context, storedBlocks [
 		}
 	}
 
-	// separate transaction: we want to keep the lock for as little as possible
+	// nil means separate transaction: we want to keep the lock for as little as possible
 	ordinalsDict, err := dbbs.getCidOrdinals(ctx, nil, &allReferencedCids)
 	if err != nil {
 		return err

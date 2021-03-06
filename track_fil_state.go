@@ -84,7 +84,11 @@ func (dbbs *PgBlockstore) CurrentFilTipSetKey(ctx context.Context) ([]cid.Cid, a
 func (dbbs *PgBlockstore) StoreFilTipSetVisit(ctx context.Context, tsDbOrdinal *int32, tsEpoch abi.ChainEpoch, visitAt time.Time, isHeadChange bool) (err error) {
 
 	if tsDbOrdinal == nil {
-		return xerrors.New("impossibly(?) invoked with NULL tipset_ordinal")
+		return xerrors.New("impossibly(?) invoked StoreFilTipSetVisit() with NULL tipset_ordinal")
+	}
+
+	if !dbbs.isWritable {
+		return xerrors.New("unable to StoreFilTipSetVisit() on a read-only store")
 	}
 
 	var tx pgx.Tx
@@ -190,6 +194,10 @@ func (dbbs *PgBlockstore) StoreFilTipSetVisit(ctx context.Context, tsDbOrdinal *
 // tipset data container. These are implemented using only basic types to
 // break the dependency cycles.
 func (dbbs *PgBlockstore) StoreFilTipSetData(ctx context.Context, tsd *DestructuredFilTipSetData) (tipsetDbOrdinal *int32, err error) {
+
+	if !dbbs.isWritable {
+		return nil, xerrors.New("unable to StoreFilTipSetData() on a read-only store")
+	}
 
 	var tx pgx.Tx
 	tx, err = dbbs.dbPool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
