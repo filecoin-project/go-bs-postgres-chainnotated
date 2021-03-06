@@ -259,10 +259,6 @@ func (dbbs *PgBlockstore) dbStore(blks []ipfsblock.Block) (err error) {
 		}
 	}()
 
-	if !dbbs.isWritable {
-		return xerrors.New("unable to Put() blocks into a read-only store")
-	}
-
 	cacheIsActive := !dbbs.cacheInactiveBeforeRead || atomic.LoadInt32(dbbs.firstReadPerformed) != 0
 
 	var wgCompress, wgParse sync.WaitGroup
@@ -457,6 +453,10 @@ func (dbbs *PgBlockstore) dbStore(blks []ipfsblock.Block) (err error) {
 	// everything happened to be in-db already!
 	if len(toInsertBlockUnits) == 0 {
 		return nil
+	}
+
+	if !dbbs.isWritable {
+		return xerrors.New("unable to write new blocks into a read-only store")
 	}
 
 	var tx pgx.Tx

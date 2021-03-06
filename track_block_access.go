@@ -35,7 +35,7 @@ type accessUnit struct {
 }
 
 func (dbbs *PgBlockstore) noteAccess(blockOrdinal int64, t time.Time, atype accessType) {
-	if dbbs.instanceNamespace == "" || atomic.LoadInt32(dbbs.firstReadPerformed) == 0 {
+	if !dbbs.isWritable || dbbs.instanceNamespace == "" || atomic.LoadInt32(dbbs.firstReadPerformed) == 0 {
 		return
 	}
 
