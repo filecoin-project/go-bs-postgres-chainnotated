@@ -2,7 +2,6 @@ package pgchainbs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -71,11 +70,11 @@ func (dbbs *PgBlockstore) Close() error {
 	if dbbs == nil {
 		return nil
 	}
-	log.Debugf("shut down of %T(%p) begin", dbbs, dbbs)
+	log.Infof("shut down of %T(%p) begins", dbbs, dbbs)
 	close(dbbs.shutdownSemaphore)
 	dbbs.dbPool.Close()
 	dbbs.lru.Purge()
-	log.Debugf("shut down of %T(%p) complete", dbbs, dbbs)
+	log.Infof("shut down of %T(%p) completed", dbbs, dbbs)
 	return nil
 }
 
@@ -109,7 +108,7 @@ func (dbbs *PgBlockstore) maybeLogUnexpectedErrorf(format string, a ...interface
 // DeleteBlock is NOT IMPLEMENTED by this store - the storage is strictly
 // append-only. Always returns an error upon invocation.
 func (NIM *PgBlockstore) DeleteBlock(cid.Cid) (err error) {
-	err = errors.New("DeleteBlock is not implemented by the annotated blockstore")
+	err = xerrors.New("DeleteBlock is not implemented by the annotated blockstore")
 	log.Error(err)
 	return
 }
@@ -229,7 +228,7 @@ func (dbbs *PgBlockstore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, erro
 
 	cursorName := `cursor_` + randBytesAsHex()
 
-	// https://www.postgresql.org/docs/12/sql-declare.html
+	// https://www.postgresql.org/docs/current/sql-declare.html
 	_, err = tx.Exec(
 		ctx,
 		fmt.Sprintf(

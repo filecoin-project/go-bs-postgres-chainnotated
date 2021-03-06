@@ -3,7 +3,6 @@ package pgchainbs
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -261,7 +260,7 @@ func (dbbs *PgBlockstore) dbStore(blks []ipfsblock.Block) (err error) {
 	}()
 
 	if !dbbs.isWritable {
-		return errors.New("unable to Put() blocks into a read-only store")
+		return xerrors.New("unable to Put() blocks into a read-only store")
 	}
 
 	cacheIsActive := !dbbs.cacheInactiveBeforeRead || atomic.LoadInt32(dbbs.firstReadPerformed) != 0

@@ -2,7 +2,6 @@ package pgchainbs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"sync/atomic"
@@ -69,7 +68,7 @@ func (dbbs *PgBlockstore) noteAccess(blockOrdinal int64, t time.Time, atype acce
 func (dbbs *PgBlockstore) FlushAccessLogs(contextEpoch abi.ChainEpoch, contextTipsetDbOrdinal *int32) error {
 
 	if dbbs.instanceNamespace == "" {
-		return errors.New("Invoking FLushAccessLogs() on a namespace-less annotated blockstore is not possible")
+		return xerrors.New("Invoking FLushAccessLogs() on a namespace-less annotated blockstore is not possible")
 	}
 
 	dbbs.accessLogsMu.Lock()

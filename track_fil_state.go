@@ -53,12 +53,13 @@ func (dbbs *PgBlockstore) CurrentFilTipSetKey(ctx context.Context) ([]cid.Cid, a
 	).Scan(&cidBytes, &epoch)
 
 	if err == pgx.ErrNoRows {
-		return nil, -1, nil
+		return nil, -1, xerrors.Errorf("view %s.current_tipset returned no results", dbbs.InstanceNamespace())
 	} else if err != nil {
 		return nil, -1, err
 	}
 
 	cids := make([]cid.Cid, 0, (len(cidBytes)+37)/38) // assume 38-byte long cids
+
 	for len(cidBytes) > 0 {
 		l, c, err := cid.CidFromBytes(cidBytes)
 		if err != nil {

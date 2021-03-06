@@ -2,7 +2,6 @@ package pgchainbs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -131,10 +130,10 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 
 	if cfg.LogDetailedAccess {
 		if dbbs.instanceNamespace == "" {
-			return nil, errors.New("detailed access logging not possible without an instance-specific chainsync namespace")
+			return nil, xerrors.New("detailed access logging not possible without an instance-specific chainsync namespace")
 		}
 		if !dbbs.isWritable {
-			return nil, errors.New("detailed access logging not possible on a read-only store")
+			return nil, xerrors.New("detailed access logging not possible on a read-only store")
 		}
 		dbbs.accessLogsDetailed = make(map[accessUnit]int64, 65535)
 	}
@@ -153,13 +152,13 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 					dbbs.instanceNamespace,
 				)
 			}
-			return nil, errors.New(
+			return nil, xerrors.New(
 				"unable to continue: connecting in ReadOnly mode requires that the fil_common_base schema has been already deployed",
 			)
 		}
 
 		if !cfg.AutoUpdateSchema {
-			return nil, errors.New(
+			return nil, xerrors.New(
 				"unable to continue: currently-deployed schema does not (partially) match the expected state, and AutoUpdateSchema is not enabled",
 			)
 		}
