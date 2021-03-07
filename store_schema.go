@@ -431,17 +431,19 @@ func (dbbs *PgBlockstore) namespacedDDL() []string {
 		//
 		// Instead a cop-out: always return the tipset of the *previous* epoch
 		`
-		CREATE OR REPLACE VIEW current_tipset AS
-			SELECT (ROW_NUMBER() OVER())-1 AS pos, * FROM (
-				SELECT UNNEST( pt.tipset_key ) AS base32_cid, UNNEST( pt.tipset_cids ) AS raw_cid, pt.epoch
-					FROM tipsets_visited tv
-					JOIN fil_common_base.tipsets t
-						ON tv.is_current_head AND tv.tipset_ordinal = t.tipset_ordinal
-					JOIN fil_common_base.states ps
-						ON t.parent_stateroot_cid = ps.stateroot_cid
-					JOIN fil_common_base.tipsets pt
-						ON ps.applied_tipset_cids = pt.tipset_cids
-			) virt
+		CREATE OR REPLACE VIEW current_head AS
+			SELECT
+					pt.tipset_key, pt.tipset_cids, pt.epoch, pt.parent_stateroot_cid,
+					ps.basefee AS parent_state_basefee, ps.weight AS parent_state_weight
+				FROM tipsets_visited tv
+				JOIN fil_common_base.tipsets t
+					ON tv.is_current_head AND tv.tipset_ordinal = t.tipset_ordinal
+				JOIN fil_common_base.states s
+					ON t.parent_stateroot_cid = s.stateroot_cid
+				JOIN fil_common_base.tipsets pt
+					ON s.applied_tipset_cids = pt.tipset_cids
+				JOIN fil_common_base.states ps
+					ON pt.parent_stateroot_cid = ps.stateroot_cid
 		`,
 
 		`
@@ -534,7 +536,7 @@ func (dbbs *PgBlockstore) neededDeployDDL(ctx context.Context) ([]string, error)
 			// check if the namespaced part is present
 			err = dbbs.dbPool.QueryRow(
 				ctx,
-				`SELECT 42 FROM pg_views WHERE schemaname = $1 AND viewname = 'current_tipset'`,
+				`SELECT 42 FROM pg_views WHERE schemaname = $1 AND viewname = 'current_head'`,
 				dbbs.instanceNamespace,
 			).Scan(new(int))
 

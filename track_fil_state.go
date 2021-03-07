@@ -7,8 +7,10 @@ import (
 
 	"github.com/filecoin-project/go-bs-postgres-chainnotated/lib/synccid"
 	"github.com/filecoin-project/go-state-types/abi"
+	filbig "github.com/filecoin-project/go-state-types/big"
 	"github.com/ipfs/go-cid"
 
+	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 	"golang.org/x/xerrors"
 )
@@ -18,10 +20,11 @@ import (
 // unavoidable as using lotus-defined types leads to import cycles.
 type DestructuredFilTipSetData struct {
 	Epoch                    abi.ChainEpoch
-	ParentWeight             string
-	ParentBaseFee            string
+	ParentWeight             filbig.Int
+	ParentBaseFee            filbig.Int
 	ParentStaterootCid       cid.Cid
 	ParentMessageReceiptsCid cid.Cid
+	TipSetCids               []cid.Cid // also duplicated in []HeaderBlocks when set
 	ParentTipSetCids         []cid.Cid
 	HeaderBlocks             []DestructuredFilTipSetHeaderBlock
 	BeaconRoundAndData       [][]byte
@@ -37,46 +40,108 @@ type DestructuredFilTipSetHeaderBlock struct {
 	WinpostTypesAndProof     [][]byte
 }
 
-// CurrentFilTipSetKeyBytes queries the configured instance namespace and
-// retrieves the epoch and ordered CIDs of the most-recently Visit()-ed tipset.
-func (dbbs *PgBlockstore) CurrentFilTipSetKey(ctx context.Context) ([]cid.Cid, abi.ChainEpoch, error) {
+// GetFilTipSetHead queries the configured instance namespace and retrieves
+// the epoch and ordered CIDs of the most-recently Visit()-ed tipset.
+func (dbbs *PgBlockstore) GetFilTipSetHead(ctx context.Context) (*DestructuredFilTipSetData, error) {
 
 	if dbbs.InstanceNamespace() == "" {
-		return nil, -1, xerrors.New("unable to invoke CurrentFilTipSetKey without a previously configured instance namespace")
+		return nil, xerrors.New("unable to invoke CurrentFilTipSetKey without a previously configured instance namespace")
 	}
 
-	var cidBytes []byte
-	var epoch int32
+	return dbbs.tsdFromQuery(
+		ctx,
+		fmt.Sprintf(
+			`SELECT tipset_cids, epoch, parent_stateroot_cid, parent_state_basefee, parent_state_weight FROM %s.current_head`,
+			dbbs.InstanceNamespace(),
+		),
+	)
+}
+
+// FindFilTipSet queries the shared tipset store for the tipset formed from the
+// provided chain header block CIDs. If the optional walkBackEpochs is larger
+// than 0, return the parent at that distance from the given tipset.
+func (dbbs *PgBlockstore) FindFilTipSet(ctx context.Context, tipsetCids []cid.Cid, walkBackEpochs abi.ChainEpoch) (*DestructuredFilTipSetData, error) {
+
+	if walkBackEpochs < 0 {
+		return nil, xerrors.Errorf("provided value '%d' for walkBackEpochs can not be negative", walkBackEpochs)
+	}
+
+	tskBytes := make([][]byte, len(tipsetCids))
+	for i := range tipsetCids {
+		tskBytes[i] = tipsetCids[i].Bytes()
+	}
+
+	return dbbs.tsdFromQuery(
+		ctx,
+		`
+		WITH RECURSIVE
+			tipset_walk AS (
+					SELECT t.tipset_ordinal, t.parent_stateroot_cid, 0 AS depth
+						FROM fil_common_base.tipsets t
+					WHERE t.tipset_cids = $1::BYTEA[]
+				UNION ALL
+					SELECT parent_tipset.tipset_ordinal, parent_tipset.parent_stateroot_cid, tipset_walk.depth+1 AS depth
+						FROM tipset_walk
+						JOIN fil_common_base.states parent_state
+							ON tipset_walk.parent_stateroot_cid = parent_state.stateroot_cid
+						JOIN fil_common_base.tipsets parent_tipset
+							ON parent_state.applied_tipset_cids = parent_tipset.tipset_cids
+					WHERE tipset_walk.depth < $2
+			)
+		SELECT t.tipset_cids, t.epoch, t.parent_stateroot_cid, s.basefee, s.weight
+			FROM tipset_walk
+			JOIN fil_common_base.tipsets t
+				ON tipset_walk.depth = $2 AND tipset_walk.tipset_ordinal = t.tipset_ordinal
+			JOIN fil_common_base.states s
+				ON t.parent_stateroot_cid = s.stateroot_cid
+		`,
+		tskBytes,
+		walkBackEpochs,
+	)
+}
+
+func (dbbs *PgBlockstore) tsdFromQuery(ctx context.Context, sql string, args ...interface{}) (*DestructuredFilTipSetData, error) {
+
+	dts := new(DestructuredFilTipSetData)
+
+	var tskBytes [][]byte
+	var parentStateCidBytes []byte
+	var parentBaseFee, parentWeight pgtype.Numeric
+
 	err := dbbs.PgxPool().QueryRow(
 		ctx,
-		fmt.Sprintf(`SELECT STRING_AGG( raw_cid, '' ), epoch FROM %s.current_tipset GROUP BY epoch`, dbbs.InstanceNamespace()),
-	).Scan(&cidBytes, &epoch)
+		sql,
+		args...,
+	).Scan(&tskBytes, &dts.Epoch, &parentStateCidBytes, &parentBaseFee, &parentWeight)
 
-	if err == pgx.ErrNoRows {
-		return nil, -1, xerrors.Errorf("view %s.current_tipset returned no results", dbbs.InstanceNamespace())
-	} else if err != nil {
-		return nil, -1, err
+	if err != nil {
+		return nil, err
 	}
 
-	cids := make([]cid.Cid, 0, (len(cidBytes)+37)/38) // assume 38-byte long cids
+	dts.ParentBaseFee = filbig.NewFromGo(parentBaseFee.Int)
+	dts.ParentWeight = filbig.NewFromGo(parentWeight.Int)
 
-	for len(cidBytes) > 0 {
-		l, c, err := cid.CidFromBytes(cidBytes)
+	dts.ParentStaterootCid, err = cid.Cast(parentStateCidBytes)
+	if err != nil {
+		return nil, xerrors.Errorf("failed to parse parent stateroot CID '%s': %w", parentStateCidBytes, err)
+	}
+
+	dts.TipSetCids = make([]cid.Cid, len(tskBytes))
+	for i := range tskBytes {
+		dts.TipSetCids[i], err = cid.Cast(tskBytes[i])
 		if err != nil {
-			return nil, -1, err
+			return nil, xerrors.Errorf("failed to parse tipset key CID '%s': %w", tskBytes[i], err)
 		}
-		cids = append(cids, c)
-		cidBytes = cidBytes[l:]
 	}
 
-	if len(cids) == 0 {
-		return nil, -1, xerrors.Errorf(
-			"impossibly(?) ended up with no CIDs from an otherwise successful query against 'current_tipset' resulting in 0x%X",
-			cidBytes,
+	if len(dts.TipSetCids) == 0 {
+		return nil, xerrors.Errorf(
+			"impossibly(?) ended up with no CIDs from an otherwise successful query against the RDBMS returning %#v",
+			tskBytes,
 		)
 	}
 
-	return cids, abi.ChainEpoch(epoch), nil
+	return dts, nil
 }
 
 // StoreFilTipSetVisit records the timing and potentially adjust orphan lists
@@ -293,8 +358,8 @@ func (dbbs *PgBlockstore) StoreFilTipSetData(ctx context.Context, tsd *Destructu
 		ON CONFLICT DO NOTHING
 		`,
 		parentStateHeight,
-		tsd.ParentWeight,
-		tsd.ParentBaseFee,
+		tsd.ParentWeight.String(),
+		tsd.ParentBaseFee.String(),
 		tsd.ParentStaterootCid.Bytes(),
 		parentTipSetKeyRaw,
 		tsd.ParentMessageReceiptsCid.Bytes(),

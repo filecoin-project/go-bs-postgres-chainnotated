@@ -148,7 +148,7 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 		if !dbbs.isWritable {
 			if dbbs.instanceNamespace != "" {
 				return nil, fmt.Errorf(
-					"unable to continue: connecting in ReadOnly mode requires that the view %s.current_tipset and all associates dependencies have been already deployed",
+					"unable to continue: connecting in ReadOnly mode requires that the view %s.current_head and all associates dependencies have been already deployed",
 					dbbs.instanceNamespace,
 				)
 			}
