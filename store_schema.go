@@ -16,14 +16,14 @@ const (
 func (dbbs *PgBlockstore) commonDDL() []string {
 	return []string{
 
-		`CREATE SCHEMA IF NOT EXISTS fil_info`,
-		`COMMENT ON SCHEMA fil_info IS 'Various info views and functions'`,
+		`CREATE SCHEMA IF NOT EXISTS fil_sysinfo`,
+		`COMMENT ON SCHEMA fil_sysinfo IS 'Various system info views and functions'`,
 
 		`CREATE SCHEMA IF NOT EXISTS fil_common_base`,
 		`COMMENT ON SCHEMA fil_common_base IS 'Append-only shared base chain data-tables and views'`,
 
 		`CREATE SCHEMA IF NOT EXISTS fil_common_derived`,
-		`COMMENT ON SCHEMA fil_common_derived IS 'Append-only shared derived database chain data-tables and views'`,
+		`COMMENT ON SCHEMA fil_common_derived IS 'Append-only shared derived chain events data-tables and views'`,
 
 		//
 		// basic block storage
@@ -137,7 +137,7 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 		`CREATE INDEX IF NOT EXISTS datablocks_reverse_links_gin_idx ON fil_common_base.datablocks USING GIN ( linked_ordinals )`,
 
 		`
-		CREATE OR REPLACE VIEW fil_info.missing_referenced_blocks AS
+		CREATE OR REPLACE VIEW fil_sysinfo.missing_referenced_blocks AS
 			SELECT block_ordinal, cid
 				FROM fil_common_base.datablocks
 			WHERE
@@ -242,7 +242,7 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 		`ALTER TABLE fil_common_base.chainblocks ALTER COLUMN winpost_types_and_proofs SET STORAGE MAIN`,
 
 		`
-		CREATE OR REPLACE VIEW fil_info.dangling_states AS
+		CREATE OR REPLACE VIEW fil_sysinfo.dangling_states AS
 			SELECT st.stateroot_cid, st.epoch
 				FROM fil_common_base.states st
 				LEFT JOIN fil_common_base.tipsets pt
@@ -252,8 +252,8 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 
 		`
 		CREATE OR REPLACE
-			FUNCTION fil_info.storage_stats()
-				RETURNS TABLE( oid OID, object_path TEXT[], current NUMERIC, unit TEXT, sys_limit TEXT, pct_used NUMERIC, last_analyzed TIMESTAMP WITH TIME ZONE, size_data TEXT, size_indices TEXT )
+			FUNCTION fil_sysinfo.storage_stats()
+				RETURNS TABLE( oid OID, object_path TEXT[], cur_value NUMERIC, unit TEXT, max_value_bits SMALLINT, last_analyzed TIMESTAMP WITH TIME ZONE, data_bytes BIGINT, index_bytes BIGINT )
 			LANGUAGE plpgsql STABLE PARALLEL SAFE
 
 		AS $$
@@ -265,7 +265,7 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 
 		BEGIN
 
-			SELECT ARRAY_AGG(pgtable.oid)
+			SELECT ARRAY_AGG( pgtable.oid )
 				FROM pg_namespace pgschema
 				JOIN pg_class pgtable
 					ON pgschema.oid = pgtable.relnamespace AND pgtable.relkind IN ( 'r', 'm', 'p' )
@@ -276,48 +276,47 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 				pgtable.relname NOT LIKE '%_accesslog'
 			INTO statOIDs;
 
-			sys_limit := '2 ^ 32 - 1'; -- both page limits and sort-of tuple-limits are max(uint32)
+			max_value_bits = 32; -- both page limits and sort-of tuple-limits are max(uint32)
 
 			FOR inforow IN (
 				SELECT
-					pgn.nspname AS table_schema, pgtab.relname AS table_name, pgtab.oid AS oid,
-					pgtoast.relname AS toast_name, pgtoast.oid AS toast_oid,
-					pgtab.relpages AS table_pages_count, pgtoast.reltuples::BIGINT AS toast_rows_approx,
-					GREATEST( stab.last_analyze, stab.last_autoanalyze ) AS last_analyzed_table,
-					GREATEST(
-						stoast.last_analyze, stoast.last_autoanalyze, stoast.last_vacuum, stoast.last_autovacuum
-					) AS last_analyzed_toast
-				FROM pg_class pgtab
-				JOIN pg_namespace pgn
-					ON pgtab.relnamespace = pgn.oid AND pgtab.oid = ANY( statOIDs )
-				LEFT JOIN pg_stat_user_tables stab
-					ON pgtab.oid = stab.relid
-				LEFT JOIN pg_class pgtoast
-					ON pgtab.reltoastrelid = pgtoast.oid
-				LEFT JOIN pg_stat_sys_tables stoast
-					ON pgtab.reltoastrelid = stoast.relid
+						pgn.nspname AS table_schema, pgtab.relname AS table_name, pgtab.oid AS oid,
+						pgtoast.relname AS toast_name, pgtoast.oid AS toast_oid,
+						pgtab.relpages AS table_pages_count, pgtoast.reltuples::BIGINT AS toast_rows_approx,
+						GREATEST( stab.last_analyze, stab.last_autoanalyze ) AS last_analyzed_table,
+						GREATEST(
+							stoast.last_analyze, stoast.last_autoanalyze, stoast.last_vacuum, stoast.last_autovacuum
+						) AS last_analyzed_toast
+					FROM pg_class pgtab
+					JOIN pg_namespace pgn
+						ON pgtab.relnamespace = pgn.oid AND pgtab.oid = ANY( statOIDs )
+					LEFT JOIN pg_stat_user_tables stab
+						ON pgtab.oid = stab.relid
+					LEFT JOIN pg_class pgtoast
+						ON pgtab.reltoastrelid = pgtoast.oid
+					LEFT JOIN pg_stat_sys_tables stoast
+						ON pgtab.reltoastrelid = stoast.relid
+				ORDER BY table_schema, table_name, toast_name NULLS FIRST
 			)
 			LOOP
 
 				oid := inforow.oid;
 				object_path := ARRAY[ inforow.table_schema, inforow.table_name ];
-				current := inforow.table_pages_count;
+				cur_value := inforow.table_pages_count;
 				unit := 'pages_used';
-				pct_used := ( current * 100 / (((1::BIGINT)<<32)-1) )::NUMERIC(5,2);
 				last_analyzed := inforow.last_analyzed_table;
-				size_data := pg_size_pretty( pg_table_size(inforow.oid) - COALESCE( pg_total_relation_size(inforow.toast_oid), 0 ) );
-				size_indices := pg_size_pretty( pg_indexes_size(inforow.oid) );
+				data_bytes := pg_table_size(inforow.oid) - COALESCE( pg_total_relation_size(inforow.toast_oid), 0 );
+				index_bytes := pg_indexes_size(inforow.oid);
 				RETURN NEXT;
 
 				IF inforow.toast_oid IS NOT NULL THEN
 					oid := inforow.toast_oid;
 					object_path := ARRAY[ inforow.table_schema, inforow.table_name, inforow.toast_name ];
-					current := inforow.toast_rows_approx / approx_avg_toast_shards;
+					cur_value := inforow.toast_rows_approx / approx_avg_toast_shards;
 					unit := 'approx_toast_oids';
-					pct_used := ( current * 100 / (((1::BIGINT)<<32)-1) )::NUMERIC(5,2);
 					last_analyzed := inforow.last_analyzed_toast;
-					size_data := pg_size_pretty( pg_table_size(inforow.toast_oid) );
-					size_indices := pg_size_pretty( pg_indexes_size(inforow.toast_oid) );
+					data_bytes := pg_table_size(inforow.toast_oid);
+					index_bytes := pg_indexes_size(inforow.toast_oid);
 					RETURN NEXT;
 				END IF;
 
@@ -327,11 +326,11 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 			oid := NULL;
 			unit := 'max_value';
 			last_analyzed := NULL;
-			size_data := NULL;
-			size_indices := NULL;
+			data_bytes := NULL;
+			index_bytes := NULL;
 
 			FOR inforow IN (
-				SELECT table_schema, table_name, column_name, ((1::BIGINT)<<(numeric_precision-2))::NUMERIC*2-1 AS sysmax, '2 ^ '||(numeric_precision-1)||' - 1' AS sysmax_text
+				SELECT table_schema, table_name, column_name, numeric_precision
 					FROM information_schema.columns isc
 				WHERE
 					numeric_precision IS NOT NULL AND numeric_scale = 0 AND numeric_precision_radix = 2
@@ -355,15 +354,15 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 							-- only consider single-key predicate-less ordered indices that can serve a MAX quickly
 							a.attnum = ANY(ix.indkey) AND iam.amname IN ( 'btree', 'brin' ) AND ix.indnkeyatts = 1 AND ix.indpred IS NULL
 					)
+				ORDER BY table_schema, table_name, column_name
 			)
 			LOOP
 				EXECUTE CONCAT(
 					'SELECT MAX(', QUOTE_IDENT(inforow.column_name), ')
 						FROM ', QUOTE_IDENT(inforow.table_schema), '.', QUOTE_IDENT(inforow.table_name)
-				) INTO current;
+				) INTO cur_value;
 				object_path := ARRAY[ inforow.table_schema, inforow.table_name, inforow.column_name ];
-				sys_limit := inforow.sysmax_text;
-				pct_used := (current*100/inforow.sysmax)::NUMERIC(5,2);
+				max_value_bits = inforow.numeric_precision-1; -- subtract 1 due to signedness
 
 				RETURN NEXT;
 
@@ -373,14 +372,28 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 		`,
 
 		`
+		CREATE OR REPLACE VIEW fil_sysinfo.storage_stats AS
+			SELECT
+				oid,
+				object_path,
+				cur_value,
+				unit,
+				'2 ^ '||max_value_bits||' - 1' AS sys_limit,
+				( cur_value::NUMERIC * 100 / ( 2::NUMERIC ^ max_value_bits - 1 ) )::NUMERIC(5,2) AS pct_used,
+				pg_size_pretty(data_bytes) AS data_size,
+				pg_size_pretty(index_bytes) AS index_size
+			FROM fil_sysinfo.storage_stats()
+		`,
+
+		`
 		DO $$
 			BEGIN
-				IF NOT EXISTS (SELECT 42 FROM pg_tables WHERE schemaname = 'fil_info' AND tablename = 'schema_metadata') THEN
-					CREATE TABLE fil_info.schema_metadata(
+				IF NOT EXISTS (SELECT 42 FROM pg_tables WHERE schemaname = 'fil_sysinfo' AND tablename = 'schema_metadata') THEN
+					CREATE TABLE fil_sysinfo.schema_metadata(
 						singleton_row BOOL NOT NULL UNIQUE CONSTRAINT single_row_in_table CHECK ( singleton_row IS TRUE ),
 						metadata JSONB NOT NULL
 					);
-					INSERT INTO fil_info.schema_metadata ( singleton_row, metadata ) VALUES ( true, '{ "schemaVersionMajor": 1, "schemaVersionMinor": 0 }' );
+					INSERT INTO fil_sysinfo.schema_metadata ( singleton_row, metadata ) VALUES ( true, '{ "schemaVersionMajor": 1, "schemaVersionMinor": 0 }' );
 				END IF;
 		END $$
 		`,
@@ -482,7 +495,7 @@ func (dbbs *PgBlockstore) neededDeployDDL(ctx context.Context) ([]string, error)
 
 	var missingCommon, missingNamespaced bool
 
-	err := dbbs.dbPool.QueryRow(ctx, `SELECT 42 FROM pg_tables WHERE schemaname = 'fil_info' AND tablename = 'schema_metadata'`).Scan(new(int))
+	err := dbbs.dbPool.QueryRow(ctx, `SELECT 42 FROM pg_tables WHERE schemaname = 'fil_sysinfo' AND tablename = 'schema_metadata'`).Scan(new(int))
 
 	switch {
 
@@ -498,7 +511,7 @@ func (dbbs *PgBlockstore) neededDeployDDL(ctx context.Context) ([]string, error)
 
 		// version table is present: pull the value
 		var version int64
-		err := dbbs.dbPool.QueryRow(ctx, `SELECT metadata->'schemaVersionMajor' FROM fil_info.schema_metadata`).Scan(&version)
+		err := dbbs.dbPool.QueryRow(ctx, `SELECT metadata->'schemaVersionMajor' FROM fil_sysinfo.schema_metadata`).Scan(&version)
 
 		switch {
 
