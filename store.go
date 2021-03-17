@@ -18,16 +18,17 @@ import (
 // PgBlockstoreConfig is the struct the user passes to NewPgBlockstore. It is
 // not referenced after the initialization.
 type PgBlockstoreConfig struct {
-	PgxConnectString        string // as understood by pgx, e.g. postgres:///{{dbname}}?host=/var/run/postgresql&user={{uname}}&password={{pass}}
-	InstanceNamespace       string // if provided use the given namespace to store recent-access and chain-tracking information
-	ExtraPreloadNamespace   string // if provided pre-warm the cache from the recently-accessed blocks listed in our and this 'extra' namespace
-	CacheSizeGiB            uint64 // optional non-default value for the approximate maximum size of the LRU write-through cache
-	StoreIsWritable         bool   // by default stores are opened in Read-Only mode, set to true to be able to write as well
-	CacheInactiveBeforeRead bool   // start with the LRU cache deactivated until the first read takes place: useful for initial bulk loading
-	DisableBlocklinkParsing bool   // disable parsing and recording of DAG relations between individual blocks as soon as they are added to the store
-	LogDetailedAccess       bool   // if true log individual block Reads and Writes with millisecond precision ( requires InstanceNamespace )
-	AutoUpdateSchema        bool   // deploy needed schema changes if any ( noop unless StoreIsWritable )
-	LogCacheStatsOnUSR1     bool   // install a USR1 trigger to INFO-log LRU cache stats
+	CacheSizeGiB             uint64 // optional non-default value for the approximate maximum size of the LRU write-through cache
+	PgxConnectString         string // as understood by pgx, e.g. postgres:///{{dbname}}?host=/var/run/postgresql&user={{uname}}&password={{pass}}
+	InstanceNamespace        string // if provided use the given namespace to store recent-access and chain-tracking information
+	ExtraPreloadNamespace    string // if provided pre-warm the cache from the recently-accessed blocks listed in our and this 'extra' namespace
+	CachePreloadRecentBlocks bool   // when set kick off a cache preloader whenever the cache activates
+	CacheInactiveBeforeRead  bool   // start with the LRU cache deactivated until the first read takes place: useful for initial bulk loading
+	StoreIsWritable          bool   // by default stores are opened in Read-Only mode, set to true to be able to write as well
+	DisableBlocklinkParsing  bool   // disable parsing and recording of DAG relations between individual blocks as soon as they are added to the store
+	LogDetailedAccess        bool   // if true log individual block Reads and Writes with millisecond precision ( requires InstanceNamespace )
+	AutoUpdateSchema         bool   // deploy needed schema changes if any ( noop unless StoreIsWritable )
+	LogCacheStatsOnUSR1      bool   // install a USR1 trigger to INFO-log LRU cache stats
 }
 
 // PgBlockstore implements github.com/ipfs/go-ipfs-blockstore in a PostgreSQL
@@ -44,6 +45,7 @@ type PgBlockstoreConfig struct {
 type PgBlockstore struct {
 	isWritable                 bool
 	cacheInactiveBeforeRead    bool
+	preloadRecents             bool
 	parseBlockLinks            bool
 	lruSizeBytes               int64
 	instanceNamespace          string

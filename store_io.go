@@ -68,7 +68,9 @@ func (dbbs *PgBlockstore) dbGet(rootCid cid.Cid, aType accessType) (_ *StoredBlo
 	// before we call a read at least once there is no point
 	if atomic.CompareAndSwapInt32(dbbs.firstReadPerformed, 0, 1) {
 		// first read fired - kick off a background prefetch ( it might elect to Panic() on some early errors )
-		go dbbs.prefetchRecentToCache()
+		if dbbs.preloadRecents {
+			go dbbs.prefetchRecentToCache()
+		}
 	}
 
 	// if we can get it out of the cache: do so

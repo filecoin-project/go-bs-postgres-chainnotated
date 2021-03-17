@@ -22,6 +22,7 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 
 	shutdownChan := make(chan struct{})
 	dbbs := &PgBlockstore{
+		preloadRecents:           cfg.CachePreloadRecentBlocks,
 		cacheInactiveBeforeRead:  cfg.CacheInactiveBeforeRead,
 		isWritable:               cfg.StoreIsWritable,
 		parseBlockLinks:          !cfg.DisableBlocklinkParsing,
