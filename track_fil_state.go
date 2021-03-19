@@ -193,7 +193,7 @@ func (dbbs *PgBlockstore) StoreFilTipSetVisit(ctx context.Context, tsDbOrdinal *
 		// mark head
 		pgBatch.Queue(
 			fmt.Sprintf(
-				`UPDATE %s.tipsets_visited SET is_current_head = NULL`,
+				`UPDATE %s.tipsets_visited SET is_current_head = NULL WHERE is_current_head IS NOT NULL`,
 				dbbs.instanceNamespace,
 			),
 		)
