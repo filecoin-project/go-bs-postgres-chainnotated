@@ -278,7 +278,7 @@ func (dbbs *PgBlockstore) dbStore(blks []ipfsblock.Block) (err error) {
 	// use the same PUT-time for all members in same batch
 	now := time.Now()
 
-	// determine what do we want to insert, and asynchronously start compression
+	// determine what do we want to insert, and start any async preprocessing needed
 	for i := range blks {
 		blkCid := blks[i].Cid()
 
@@ -318,6 +318,11 @@ func (dbbs *PgBlockstore) dbStore(blks []ipfsblock.Block) (err error) {
 				make([]byte, 0, len(blockData)),
 				blockData...,
 			)
+		}
+
+		// we won't be able to write any of the results anyway - do not preprocess
+		if !dbbs.isWritable {
+			continue
 		}
 
 		if dbbs.parseBlockLinks {
