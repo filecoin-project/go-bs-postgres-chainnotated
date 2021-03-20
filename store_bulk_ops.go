@@ -187,7 +187,7 @@ func (dbbs *PgBlockstore) PrecacheByOrdinal(ctx context.Context, ordinals []int6
 				return
 			}
 
-			sbs, bytes, err := dbbs.InflateDbRows(rows, false, false)
+			sbs, bytes, err := dbbs.InflateDbRows(rows, false)
 			if err != nil {
 				errs <- err
 				return

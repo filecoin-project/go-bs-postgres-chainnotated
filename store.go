@@ -18,17 +18,18 @@ import (
 // PgBlockstoreConfig is the struct the user passes to NewPgBlockstore. It is
 // not referenced after the initialization.
 type PgBlockstoreConfig struct {
-	CacheSizeGiB             uint64 // optional non-default value for the approximate maximum size of the LRU write-through cache
-	PgxConnectString         string // as understood by pgx, e.g. postgres:///{{dbname}}?host=/var/run/postgresql&user={{uname}}&password={{pass}}
-	InstanceNamespace        string // if provided use the given namespace to store recent-access and chain-tracking information
-	ExtraPreloadNamespace    string // if provided pre-warm the cache from the recently-accessed blocks listed in our and this 'extra' namespace
-	CachePreloadRecentBlocks bool   // when set kick off a cache preloader whenever the cache activates
-	CacheInactiveBeforeRead  bool   // start with the LRU cache deactivated until the first read takes place: useful for initial bulk loading
-	StoreIsWritable          bool   // by default stores are opened in Read-Only mode, set to true to be able to write as well
-	DisableBlocklinkParsing  bool   // disable parsing and recording of DAG relations between individual blocks as soon as they are added to the store
-	LogDetailedAccess        bool   // if true log individual block Reads and Writes with millisecond precision ( requires InstanceNamespace )
-	AutoUpdateSchema         bool   // deploy needed schema changes if any ( noop unless StoreIsWritable )
-	LogCacheStatsOnUSR1      bool   // install a USR1 trigger to INFO-log LRU cache stats
+	CacheSizeGiB              uint64 // optional non-default value for the approximate maximum size of the LRU write-through cache
+	PrefetchDagLayersOnDbRead int32  // USE WITH CARE: how many layers of descendents to prefetch on bs.Get()/bs.View() when hitting the RDBMS
+	PgxConnectString          string // as understood by pgx, e.g. postgres:///{{dbname}}?host=/var/run/postgresql&user={{uname}}&password={{pass}}
+	InstanceNamespace         string // if provided use the given namespace to store recent-access and chain-tracking information
+	ExtraPreloadNamespace     string // if provided pre-warm the cache from the recently-accessed blocks listed in our and this 'extra' namespace
+	CachePreloadRecentBlocks  bool   // when set kick off a cache preloader whenever the cache activates
+	CacheInactiveBeforeRead   bool   // start with the LRU cache deactivated until the first read takes place: useful for initial bulk loading
+	StoreIsWritable           bool   // by default stores are opened in Read-Only mode, set to true to be able to write as well
+	DisableBlocklinkParsing   bool   // disable parsing and recording of DAG relations between individual blocks as soon as they are added to the store
+	LogDetailedAccess         bool   // if true log individual block Reads and Writes with millisecond precision ( requires InstanceNamespace )
+	AutoUpdateSchema          bool   // deploy needed schema changes if any ( noop unless StoreIsWritable )
+	LogCacheStatsOnUSR1       bool   // install a USR1 trigger to INFO-log LRU cache stats
 }
 
 // PgBlockstore implements github.com/ipfs/go-ipfs-blockstore in a PostgreSQL
@@ -47,6 +48,7 @@ type PgBlockstore struct {
 	cacheInactiveBeforeRead    bool
 	preloadRecents             bool
 	parseBlockLinks            bool
+	prefetchDagLayersOnDbRead  int32
 	lruSizeBytes               int64
 	instanceNamespace          string
 	additionalPreloadNamespace string
@@ -133,7 +135,7 @@ func (dbbs *PgBlockstore) PutMany(bls []ipfsblock.Block) error { return dbbs.dbS
 // The work done in this function is identical to GetStoredBlock().
 func (dbbs *PgBlockstore) Has(c cid.Cid) (found bool, err error) {
 	var sb *StoredBlock
-	sb, err = dbbs.dbGet(c, HAS)
+	sb, err = dbbs.dbGet(c, 0, HAS)
 	if sb != nil && err == nil {
 		found = true
 	}
@@ -144,7 +146,7 @@ func (dbbs *PgBlockstore) Has(c cid.Cid) (found bool, err error) {
 // returns the size of the content of this given block.
 // The work done in this function is identical to GetStoredBlock().
 func (dbbs *PgBlockstore) GetSize(c cid.Cid) (int, error) {
-	sb, err := dbbs.dbGet(c, SIZE)
+	sb, err := dbbs.dbGet(c, 0, SIZE)
 
 	switch {
 
@@ -159,55 +161,50 @@ func (dbbs *PgBlockstore) GetSize(c cid.Cid) (int, error) {
 	}
 }
 
-// Get is a thin casting-wrapper around GetStoredBlock, allowing *PgBlockstore
-// to satisfy the IPFS Blockstore interface.
-func (dbbs *PgBlockstore) Get(c cid.Cid) (ipfsblock.Block, error) { return dbbs.GetStoredBlock(c) }
-
 // GetStoredBlock checks the LRU cache, populates it from the RDBMS if needed, and
 // returns the block in question if found.
-func (dbbs *PgBlockstore) GetStoredBlock(c cid.Cid) (*StoredBlock, error) {
+func (dbbs *PgBlockstore) GetStoredBlock(c cid.Cid) (sb *StoredBlock, err error) {
+	sb, _, err = dbbs.dbGetInflated(c)
+	return
+}
 
-	sb, err := dbbs.dbGet(c, GET)
-
-	switch {
-
-	case err != nil:
-		return nil, err
-
-	case sb == nil:
-		return nil, blockstore.ErrNotFound
-
-	default:
-		// trigger a possible error condition
-		if _, err = sb.inflatedContent(false); err != nil {
-			return nil, err
-		}
-		return sb, nil
-	}
+// Get is identical to GetStoredBlock but with an interface cast, allowing
+// *PgBlockstore to satisfy the IPFS Blockstore interface.
+func (dbbs *PgBlockstore) Get(c cid.Cid) (b ipfsblock.Block, err error) {
+	b, _, err = dbbs.dbGetInflated(c)
+	return
 }
 
 // View is supposed to be a slightly more performant way to access the content
 // of a block by avoiding copies in exchange for the user pledging not to
-// retain the returned slice. Implemented identically to Get() behind the
-// scenes.
+// retain the returned slice. Implemented identically to GetStoredBlock()
+// behind the scenes.
 func (dbbs *PgBlockstore) View(c cid.Cid, cb func([]byte) error) error {
-	sb, err := dbbs.dbGet(c, GET)
-
-	switch {
-
-	case err != nil:
+	_, data, err := dbbs.dbGetInflated(c)
+	if err != nil {
 		return err
-
-	case sb == nil:
-		return blockstore.ErrNotFound
-
-	default:
-		data, err := sb.inflatedContent(false)
-		if err != nil {
-			return err
-		}
-		return cb(data)
 	}
+	return cb(data)
+}
+
+func (dbbs *PgBlockstore) dbGetInflated(c cid.Cid) (sb *StoredBlock, data []byte, err error) {
+	sb, err = dbbs.dbGet(c, dbbs.prefetchDagLayersOnDbRead, GET)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if sb == nil {
+		return nil, nil, blockstore.ErrNotFound
+	}
+
+	// triggers potential decompression and subsequent error condition
+	data, err = sb.inflatedContent(false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return sb, data, nil
 }
 
 // AllKeysChan returns a channel which will in turn provide every CID currently

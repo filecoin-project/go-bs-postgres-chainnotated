@@ -22,19 +22,20 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 
 	shutdownChan := make(chan struct{})
 	dbbs := &PgBlockstore{
-		preloadRecents:           cfg.CachePreloadRecentBlocks,
-		cacheInactiveBeforeRead:  cfg.CacheInactiveBeforeRead,
-		isWritable:               cfg.StoreIsWritable,
-		parseBlockLinks:          !cfg.DisableBlocklinkParsing,
-		lruSizeBytes:             DefaultLruCacheSize,
-		firstReadPerformed:       new(int32),
-		lastFlushEpoch:           new(int64),
-		linearSyncEventCount:     new(int64),
-		shutdownSemaphore:        shutdownChan,
-		accessLogsRecent:         make(map[int64]struct{}, 16384),
-		limiterSetLastAccess:     make(chan struct{}, 1),
-		limiterLogsDetailedWrite: make(chan struct{}, concurrentDetailedLogWriters),
-		limiterBlockProcessing:   make(chan struct{}, concurrentBlockProcessors),
+		prefetchDagLayersOnDbRead: cfg.PrefetchDagLayersOnDbRead,
+		preloadRecents:            cfg.CachePreloadRecentBlocks,
+		cacheInactiveBeforeRead:   cfg.CacheInactiveBeforeRead,
+		isWritable:                cfg.StoreIsWritable,
+		parseBlockLinks:           !cfg.DisableBlocklinkParsing,
+		lruSizeBytes:              DefaultLruCacheSize,
+		firstReadPerformed:        new(int32),
+		lastFlushEpoch:            new(int64),
+		linearSyncEventCount:      new(int64),
+		shutdownSemaphore:         shutdownChan,
+		accessLogsRecent:          make(map[int64]struct{}, 16384),
+		limiterSetLastAccess:      make(chan struct{}, 1),
+		limiterLogsDetailedWrite:  make(chan struct{}, concurrentDetailedLogWriters),
+		limiterBlockProcessing:    make(chan struct{}, concurrentBlockProcessors),
 	}
 
 	if cfg.InstanceNamespace != "" {

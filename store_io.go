@@ -58,7 +58,7 @@ func (dbbs *PgBlockstore) cachePut(sbs ...*StoredBlock) {
 }
 
 // This is what backs blockstore.Get/Size/Has
-func (dbbs *PgBlockstore) dbGet(rootCid cid.Cid, aType accessType) (_ *StoredBlock, err error) {
+func (dbbs *PgBlockstore) dbGet(rootCid cid.Cid, prefetchDescendentDagLevels int32, aType accessType) (_ *StoredBlock, err error) {
 	defer func() {
 		if err != nil {
 			dbbs.maybeLogUnexpectedErrorf("error retrieving block %s: %s", rootCid.String(), err)
@@ -101,21 +101,61 @@ func (dbbs *PgBlockstore) dbGet(rootCid cid.Cid, aType accessType) (_ *StoredBlo
 	cidBuf := pool.Get(len(cidKey))
 	copy(cidBuf, cidKey)
 
-	rows, err := dbbs.dbPool.Query(
-		context.TODO(),
-		fmt.Sprintf(
-			`
-			SELECT %s
-				FROM fil_common_base.datablocks
-			WHERE
-				cid = $1::BYTEA
-					AND
-				size IS NOT NULL
-			`,
-			StoredBlocksInflatorSelection,
-		),
-		cidBuf,
-	)
+	var rows pgx.Rows
+
+	if prefetchDescendentDagLevels > 0 {
+		rows, err = dbbs.dbPool.Query(
+			context.TODO(),
+			fmt.Sprintf(
+				`
+				WITH RECURSIVE
+					cte_dag( descendent_ordinal, level ) AS (
+
+							SELECT block_ordinal, 0
+								FROM fil_common_base.datablocks
+							WHERE cid = $1::BYTEA AND size IS NOT NULL
+
+						UNION
+
+							SELECT UNNEST( datablocks.linked_ordinals ), cte_dag.level+1
+								FROM fil_common_base.datablocks
+								JOIN cte_dag
+									ON
+										datablocks.block_ordinal = cte_dag.descendent_ordinal
+											AND
+										cte_dag.level < $2
+					)
+				SELECT %s
+					FROM fil_common_base.datablocks
+					JOIN cte_dag
+						ON
+							datablocks.block_ordinal = cte_dag.descendent_ordinal
+								AND
+							datablocks.size IS NOT NULL
+				ORDER BY cte_dag.level
+				`,
+				StoredBlocksInflatorSelection,
+			),
+			cidBuf,
+			prefetchDescendentDagLevels,
+		)
+	} else {
+		rows, err = dbbs.dbPool.Query(
+			context.TODO(),
+			fmt.Sprintf(
+				`
+				SELECT %s
+					FROM fil_common_base.datablocks
+				WHERE
+					cid = $1::BYTEA
+						AND
+					size IS NOT NULL
+				`,
+				StoredBlocksInflatorSelection,
+			),
+			cidBuf,
+		)
+	}
 
 	pool.Put(cidBuf)
 
@@ -126,14 +166,14 @@ func (dbbs *PgBlockstore) dbGet(rootCid cid.Cid, aType accessType) (_ *StoredBlo
 		return nil, err
 	}
 
-	sbs, _, err := dbbs.InflateDbRows(rows, (aType == GET), false)
+	sbs, _, err := dbbs.InflateDbRows(rows, false)
 
 	switch {
 	case err != nil:
 		return nil, err
 	case len(sbs) == 0:
 		return nil, nil
-	case len(sbs) > 1:
+	case prefetchDescendentDagLevels == 0 && len(sbs) > 1:
 		log.Panicf("impossibly(?) retrieved %d rows for a single unique cid '%s'", len(sbs), rootCid.String())
 		return nil, nil
 	default:
@@ -145,11 +185,12 @@ func (dbbs *PgBlockstore) dbGet(rootCid cid.Cid, aType accessType) (_ *StoredBlo
 // InflateDbRows transforms result of
 // 	`SELECT %StoredBlocksInflatorSelection% FROM fil_common_base.datablocks ...`
 // to a set of StoredBlock's, which in turn are the structures implementing
-// github.com/ipfs/go-block-format.Block() Before returning Close()s the
-// supplied pgx.Rows()
-func (dbbs *PgBlockstore) InflateDbRows(rows pgx.Rows, eagerUnpack bool, skipCaching bool) (blocks []*StoredBlock, bytesCached int64, err error) {
+// github.com/ipfs/go-block-format.Block()
+// Before returning, Close()s the supplied pgx.Rows()
+func (dbbs *PgBlockstore) InflateDbRows(rows pgx.Rows, skipCaching bool) (blocks []*StoredBlock, bytesCached int64, err error) {
 	defer rows.Close()
 
+	seen := cid.NewSet()
 	ret := make([]*StoredBlock, 0)
 
 	for rows.Next() {
@@ -170,6 +211,10 @@ func (dbbs *PgBlockstore) InflateDbRows(rows pgx.Rows, eagerUnpack bool, skipCac
 
 		if sb.cid, err = cid.Cast(cidBytes); err != nil {
 			return nil, 0, err
+		}
+
+		if !seen.Visit(sb.cid) {
+			continue
 		}
 
 		switch {
@@ -201,12 +246,6 @@ func (dbbs *PgBlockstore) InflateDbRows(rows pgx.Rows, eagerUnpack bool, skipCac
 				make([]byte, 0, len(zstdMagic)+len(dbContentBytes)),
 				zstdMagic...,
 			), dbContentBytes...)
-
-			// we know we will need the content soon: trigger decompression in the background
-			// do so without a limiter: if we starve the CPU for a bit - so be it
-			if eagerUnpack {
-				go sb.inflatedContent(false)
-			}
 
 		default:
 			return nil, 0, fmt.Errorf(
