@@ -142,10 +142,10 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 				FROM fil_common_base.datablocks
 			WHERE
 				size IS NULL
-					AND
-				SUBSTRING( cid FROM 1 FOR 4 ) != '\x0181e203'	-- CommD/P ( baga... )
-					AND
-				SUBSTRING( cid FROM 1 FOR 4 ) != '\x0182e203'	-- CommR   ( bagb... )
+				--		AND
+				--	SUBSTRING( cid FROM 1 FOR 4 ) != '\x0181e203'	-- CommD/P ( baga... )
+				--		AND
+				--	SUBSTRING( cid FROM 1 FOR 4 ) != '\x0182e203'	-- CommR   ( bagb... )
 		`,
 
 		//
