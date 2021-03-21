@@ -11,7 +11,6 @@ require (
 	github.com/ipfs/go-log/v2 v2.1.2
 	github.com/jackc/pgtype v1.6.2
 	github.com/jackc/pgx/v4 v4.10.1
-	github.com/klauspost/compress v1.11.12
 	github.com/libp2p/go-buffer-pool v0.0.2
 	github.com/multiformats/go-multihash v0.0.14
 	github.com/valyala/gozstd v1.9.0

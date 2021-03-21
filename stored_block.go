@@ -10,7 +10,7 @@ import (
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	cborgen "github.com/whyrusleeping/cbor-gen"
 
-	"github.com/klauspost/compress/zstd"
+	"github.com/valyala/gozstd"
 	"golang.org/x/xerrors"
 )
 
@@ -68,10 +68,6 @@ func (sb *StoredBlock) RawData() (data []byte) {
 	return
 }
 
-// decompressor
-// FIXME - perhaps switch this to "github.com/valyala/gozstd" as well...?
-var zstDec, _ = zstd.NewReader(nil)
-
 // This is the central access point for the content, which is unpacked here if needed
 func (sb *StoredBlock) inflatedContent(skipCidValidation bool) ([]byte, error) {
 	sb.mu.Lock()
@@ -86,9 +82,9 @@ func (sb *StoredBlock) inflatedContent(skipCidValidation bool) ([]byte, error) {
 
 		if *sb.dbContentEncoding != 1 {
 			sb.errHolder = fmt.Errorf("unexpected dbContentEncoding '%d' during hydration", *sb.dbContentEncoding)
-		} else if sb.blockContent, sb.errHolder = zstDec.DecodeAll(
-			sb.dbDeflatedContent,
+		} else if sb.blockContent, sb.errHolder = gozstd.Decompress(
 			make([]byte, 0, sb.size),
+			sb.dbDeflatedContent,
 		); sb.errHolder != nil {
 			sb.errHolder = xerrors.Errorf("zstd decompression failed: %w", sb.errHolder)
 		}

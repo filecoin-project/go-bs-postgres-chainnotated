@@ -391,7 +391,7 @@ func (dbbs *PgBlockstore) dbStore(blks []ipfsblock.Block) (err error) {
 			if bufSize < 128 {
 				bufSize = 128
 			}
-			bufSize += 32
+			bufSize += 128
 
 			buf := pool.Get(bufSize)
 			// Despite the cgo boundary cross, this is 2x faster than using "github.com/klauspost/compress/zstd"

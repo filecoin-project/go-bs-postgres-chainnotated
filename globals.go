@@ -42,8 +42,7 @@ const (
 const (
 	concurrentDetailedLogWriters = 8
 
-	// Applies to github.com/valyala/gozstd only
-	// Not using klauspost's pure-go version for compression: too slow
+	// For github.com/valyala/gozstd
 	zstdCompressLevel = 11
 )
 
