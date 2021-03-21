@@ -150,8 +150,8 @@ func (dbbs *PgBlockstore) PrecacheByOrdinal(ctx context.Context, ordinals []int6
 		wg.Add(1)
 
 		batchLen := len(ordinals)
-		if batchLen > BulkFetchSize {
-			batchLen = BulkFetchSize
+		if batchLen > BulkFetchSliceSize {
+			batchLen = BulkFetchSliceSize
 		}
 
 		batch := ordinals[len(ordinals)-batchLen:]
@@ -221,7 +221,7 @@ func (dbbs *PgBlockstore) allKeysFetchWorker(ctx context.Context, cursorTxToBeCl
 	var err error
 	var cidRows pgx.Rows
 	var c cid.Cid
-	cidList := make([]cid.Cid, 0, BulkFetchSize)
+	cidList := make([]cid.Cid, 0, BulkFetchSliceSize)
 
 	defer func() {
 		if err != nil {
@@ -250,7 +250,7 @@ func (dbbs *PgBlockstore) allKeysFetchWorker(ctx context.Context, cursorTxToBeCl
 
 		cidRows, err = cursorTxToBeClosed.Query(ctx, fmt.Sprintf(
 			`FETCH FORWARD %d FROM %s`,
-			BulkFetchSize,
+			BulkFetchSliceSize,
 			cursorName,
 		))
 		if err != nil {

@@ -248,7 +248,7 @@ func (dbbs *PgBlockstore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, erro
 		return nil, xerrors.Errorf("cursor declaration failed: %w", err)
 	}
 
-	akc := make(chan cid.Cid, BulkFetchSize*3)
+	akc := make(chan cid.Cid, BulkFetchSliceSize*3) // FIXME 3x is somewhat arbitrary
 
 	go dbbs.allKeysFetchWorker(ctx, tx, cursorName, akc)
 	tx = nil // disarms the defer, the cursor-declare transaction will be rolled back by the worker

@@ -33,7 +33,7 @@ var (
 
 const (
 	DefaultLruCacheSize           = int64(32 << 30)                                                      // the default LRU cache size in bytes, overridable in PgBlockstoreConfig
-	BulkFetchSize                 = 256 << 10                                                            // how many blocks to fetch at once from various RDBMS sets
+	BulkFetchSliceSize            = 32768                                                                // how many blocks to fetch at once from various RDBMS sets
 	ObjectExLockStatement         = `SELECT PG_ADVISORY_XACT_LOCK( 140000, TO_REGCLASS( $1 )::INTEGER )` // complete exclusive-lock-by-named-object statement
 	PgLockOidVector               = 140000                                                               // the high-32bit value of 140000 is arbitrarily chosen
 	StoredBlocksInflatorSelection = `cid, block_ordinal, size, content_encoding, content`                // ordered set of columns expected by InflateDbRows
