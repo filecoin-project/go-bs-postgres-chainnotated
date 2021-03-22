@@ -23,6 +23,8 @@ var IgnoreLinksToCodecs = map[uint64]struct{}{
 	cid.FilCommitmentSealed:   {},
 }
 
+const minPgxPoolSize = int32(3) // private, needed for reasonably safe namespace locking
+
 var (
 	MaxPgxPoolSize                  = int32(32)             // the maximum size of the connection pool (default scales dynamically based on NumCPU)
 	TrackRecentTipsetsCount         = 25 * EpochsInHour     // determines how many Filecoin epochs in the past do we consider a block to be "recently-accessed"

@@ -64,9 +64,20 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 	if err != nil {
 		return nil, xerrors.Errorf("failed to parse connection string '%s': %w", cfg.PgxConnectString, err)
 	}
+
+	// If one needs to watch the cleartext in tcpdump or somesuch
+	// dbConnCfg.ConnConfig.TLSConfig = nil
+
 	if !dbbs.isWritable {
 		dbConnCfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "TRUE"
+	} else if dbbs.instanceNamespace != "" {
+		// when we are writable and will be locking - ensure there are always a few live connections
+		dbConnCfg.MinConns = minPgxPoolSize
+		if dbConnCfg.MaxConns < minPgxPoolSize {
+			dbConnCfg.MaxConns = minPgxPoolSize
+		}
 	}
+
 	if dbConnCfg.MaxConns > MaxPgxPoolSize {
 		dbConnCfg.MaxConns = MaxPgxPoolSize
 	}
@@ -115,7 +126,8 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 		)
 	}
 
-	// check whether we are talking to a slave, and force RO to shut off tipset-tracking automatically
+	// Check if write perms are missing due to external factors ( e.g. replica)
+	// and force RO to shut off access-tracking automatically
 	if dbbs.isWritable {
 		if _, err := dbPool.Exec(ctx, fmt.Sprintf(
 			"CREATE TEMPORARY TABLE %s ( pk INTEGER ) ON COMMIT DROP",
@@ -193,11 +205,12 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 		}
 		if !exLockSuccess {
 			return nil, xerrors.Errorf(
-				"unable to continue: another connection pool is already holding locks over OID of %s",
+				"unable to continue: another connection pool is already holding shared locks over OID of %s",
 				tableToAdvisoryLock,
 			)
 		}
 
+		// every new connection will hold a shared lock, preventing future exclusive ones
 		dbConnCfg.AfterConnect = func(ctx context.Context, db *pgx.Conn) error {
 			_, err := db.Exec(
 				ctx,
@@ -209,48 +222,41 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 		}
 
 		// we need a new connection pool with the config adjusted, will block waiting for SHlock
-		secondConnReady := make(chan struct{})
+		finalPoolReady := make(chan struct{})
 		go func() {
+			// manually force minconn fresh connections ( healthcheck won't kick in for a while )
+			// https://github.com/jackc/pgx/issues/969
+			var conns [minPgxPoolSize]*pgxpool.Conn
+
+			defer func() {
+				for _, c := range conns {
+					if c != nil {
+						c.Release()
+					}
+				}
+				close(finalPoolReady)
+			}()
+
 			dbbs.dbPool, err = pgxpool.ConnectConfig(ctx, dbConnCfg)
-			close(secondConnReady)
+			if err != nil {
+				return
+			}
+
+			for i := int32(0); i < minPgxPoolSize; i++ {
+				conns[i], err = dbbs.dbPool.Acquire(ctx)
+				if err != nil {
+					return
+				}
+			}
+
 		}()
 
-		// release the above (old) EXlock
+		// release the initial (old) EXlock
 		dbPool.Close()
-		<-secondConnReady
+		<-finalPoolReady
 
 		dbPool = dbbs.dbPool // a defer captures dbPool higher up
 		if err != nil {
-			return nil, err
-		}
-
-		// double check that the new pool now can do an EX-lock
-		locktestConn, err := dbbs.dbPool.Acquire(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer locktestConn.Release()
-
-		err = locktestConn.QueryRow(
-			ctx,
-			`SELECT PG_TRY_ADVISORY_LOCK( $1, TO_REGCLASS( $2 )::INTEGER )`,
-			PgLockOidVector,
-			tableToAdvisoryLock,
-		).Scan(&exLockSuccess)
-		if err != nil {
-			return nil, xerrors.Errorf(
-				"error while re-attempting exclusive lock over OID of %s: %w",
-				tableToAdvisoryLock,
-				err,
-			)
-		}
-		if !exLockSuccess {
-			return nil, xerrors.Errorf(
-				"unable to continue: another connection pool is already holding locks over OID of %s",
-				tableToAdvisoryLock,
-			)
-		}
-		if err = locktestConn.Conn().Close(ctx); err != nil {
 			return nil, err
 		}
 	}
