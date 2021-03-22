@@ -37,7 +37,7 @@ func (cs *Set) Has(c cid.Cid) (isContained bool) {
 	return
 }
 
-// Add puts a Cid in the Set
+// Add inserts all provided Cids into the Set
 func (cs *Set) Add(cids ...cid.Cid) {
 	cs.mu.Lock()
 	if cs.set == nil {
@@ -75,7 +75,7 @@ func (cs *Set) Visit(c cid.Cid) (isNewMember bool) {
 	return
 }
 
-// Remove deletes a Cid from the Set
+// Remove removes all provided Cids from the Set
 func (cs *Set) Remove(cids ...cid.Cid) {
 	cs.mu.Lock()
 
@@ -88,7 +88,7 @@ func (cs *Set) Remove(cids ...cid.Cid) {
 	cs.mu.Unlock()
 }
 
-// RemoveKeyString deletes a Cid by its KeyString
+// RemoveKeyString deletes all Cids matching the given KeyStrings from the Set
 func (cs *Set) RemoveKeyString(cidKeyStrings ...string) {
 	cs.mu.Lock()
 
@@ -105,10 +105,6 @@ func (cs *Set) RemoveKeyString(cidKeyStrings ...string) {
 func (cs *Set) Len() int {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-
-	if cs.set == nil {
-		return 0
-	}
 	return len(cs.set)
 }
 

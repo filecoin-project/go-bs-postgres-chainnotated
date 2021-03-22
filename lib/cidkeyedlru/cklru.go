@@ -154,7 +154,7 @@ func (l *CKLru) Add(c cid.Cid, object interface{}, cost int64) bool {
 
 	l.lookupsMu.Lock()
 	l.orderedMu.Lock()
-	defer func() { l.lookupsMu.Unlock(); l.orderedMu.Unlock() }()
+	defer func() { l.orderedMu.Unlock(); l.lookupsMu.Unlock() }()
 
 	subDict := l.lookups[tailByte(c)]
 
@@ -225,6 +225,7 @@ func (l *CKLru) Populate(entries []*LruEntry) {
 		toInsertGroups[tb] = append(toInsertGroups[tb], entries[i])
 
 		if entries[i].Cost <= 0 {
+			l.lookupsMu.RUnlock()
 			panic("Populate() with negative or zero cost unsupported")
 		}
 		newCost += entries[i].Cost
@@ -238,7 +239,7 @@ func (l *CKLru) Populate(entries []*LruEntry) {
 
 	l.lookupsMu.Lock()
 	l.orderedMu.Lock()
-	defer func() { l.lookupsMu.Unlock(); l.orderedMu.Unlock() }()
+	defer func() { l.orderedMu.Unlock(); l.lookupsMu.Unlock() }()
 
 	if newCost >= l.maxCost {
 		// ugh... we will overflow the cache... oh well... just purge
@@ -276,7 +277,7 @@ func (l *CKLru) Populate(entries []*LruEntry) {
 
 			// don't allow an overflow
 			if spaceLeft-entry.Cost < 0 {
-				return
+				continue // a subsequent entry might be small enough to fit
 			}
 			spaceLeft -= entry.Cost
 
@@ -296,8 +297,6 @@ func (l *CKLru) Populate(entries []*LruEntry) {
 			l.metrics.CountAdded++
 		}
 	}
-
-	return
 }
 
 // Evict attempts to remove the object keyed by the given Cid, and returns true
@@ -325,8 +324,8 @@ func (l *CKLru) Evict(c cid.Cid) bool {
 	l.metrics.CostEvicted += l.ordered.Remove(elt).(*LruEntry).Cost
 	l.metrics.CountEvicted++
 
-	l.lookupsMu.Unlock()
 	l.orderedMu.Unlock()
+	l.lookupsMu.Unlock()
 
 	return true
 }
@@ -342,8 +341,8 @@ func (l *CKLru) Purge() {
 		l.lookups[i] = make(map[cid.Cid]*list.Element, initSubdictSize)
 	}
 
-	l.lookupsMu.Unlock()
 	l.orderedMu.Unlock()
+	l.lookupsMu.Unlock()
 }
 
 // Reallocate is a TEMPORARY tool to figure out where memory is going.
@@ -374,6 +373,7 @@ func (l *CKLru) Metrics() (metricsCopy Metrics) {
 			allSubdictsElementCount += len(m)
 		}
 		if allSubdictsElementCount != l.ordered.Len() {
+			l.orderedMu.Unlock()
 			panic(fmt.Sprintf(
 				"impossible(?) mismatch of element-count in the lookup dictionaries (%d) and linked-list (%d)",
 				allSubdictsElementCount,
