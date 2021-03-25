@@ -127,14 +127,35 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 	}
 
 	// Check if write perms are missing due to external factors ( e.g. replica)
-	// and force RO to shut off access-tracking automatically
+	// and force RO which in turn shuts off various parts of the access pipeline
 	if dbbs.isWritable {
-		if _, err := dbPool.Exec(ctx, fmt.Sprintf(
+		conn, err := dbPool.Acquire(ctx)
+		defer func() {
+			if conn != nil {
+				conn.Release()
+			}
+		}()
+		if err != nil {
+			return nil, xerrors.Errorf("writability check connection acquire failed: %w", err)
+		}
+
+		if _, tempCreateErr := conn.Exec(ctx, fmt.Sprintf(
 			"CREATE TEMPORARY TABLE %s ( pk INTEGER ) ON COMMIT DROP",
 			"tmptable_"+randBytesAsHex(),
-		)); err != nil {
+		)); tempCreateErr != nil {
+
+			// We might have errored for a lot of reasons: double check we are still alive
+			// There doesn't seem to be a decent way to enumerate all potential reasons for a failure
+			if err = conn.QueryRow(ctx, `SELECT CURRENT_SETTING('server_version_num')::INTEGER`).Scan(new(int32)); err != nil {
+				return nil, xerrors.Errorf("connection entered unexpected faulty state during writability check: %w", err)
+			}
+
+			log.Warnf("temporary table creation failed even though StoreIsWritable was set: forcing blockstore back to ReadOnly mode: %s", tempCreateErr)
 			dbbs.isWritable = false
 		}
+
+		conn.Release()
+		conn = nil // disarm defer
 	}
 
 	dbbs.lru, err = cidkeyedlru.NewCidKeyedLruCache(dbbs.lruSizeBytes)
