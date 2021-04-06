@@ -68,6 +68,10 @@ type PgBlockstore struct {
 	linearSyncEventCount *int64
 }
 
+// assert we can Blockstore/Viewer
+var _ blockstore.Blockstore = &PgBlockstore{}
+var _ blockstore.Viewer = &PgBlockstore{}
+
 // Close releases the database connection and purges the cache. The store can
 // not be used again after it has been closed.
 func (dbbs *PgBlockstore) Close() error {
@@ -109,10 +113,18 @@ func (dbbs *PgBlockstore) maybeLogUnexpectedErrorf(format string, a ...interface
 // Start of blockstore.Blockstore implementation
 //
 
-// DeleteBlock is NOT IMPLEMENTED by this store - the storage is strictly
-// append-only. Always returns an error upon invocation.
+// DeleteBlock is NOT YET IMPLEMENTED by this store - for now the storage is
+// strictly append-only. Always returns an error upon invocation.
 func (NIM *PgBlockstore) DeleteBlock(cid.Cid) (err error) {
 	err = xerrors.New("DeleteBlock is not implemented by the annotated blockstore")
+	log.Error(err)
+	return
+}
+
+// DeleteMany is NOT YET IMPLEMENTED by this store - for now the storage is
+// strictly append-only. Always returns an error upon invocation.
+func (NIM *PgBlockstore) DeleteMany([]cid.Cid) (err error) {
+	err = xerrors.New("DeleteMany is not implemented by the annotated blockstore")
 	log.Error(err)
 	return
 }
