@@ -166,7 +166,7 @@ func (dbbs *PgBlockstore) dbGet(rootCid cid.Cid, prefetchDescendentDagLevels int
 		return nil, err
 	}
 
-	sbs, _, err := dbbs.InflateDbRows(rows, false)
+	sbs, _, err := dbbs.InflateAndCloseDbRows(rows, false)
 
 	switch {
 	case err != nil:
@@ -182,12 +182,12 @@ func (dbbs *PgBlockstore) dbGet(rootCid cid.Cid, prefetchDescendentDagLevels int
 	}
 }
 
-// InflateDbRows transforms result of
+// InflateAndCloseDbRows transforms result of
 // 	`SELECT %StoredBlocksInflatorSelection% FROM fil_common_base.datablocks ...`
 // to a set of StoredBlock's, which in turn are the structures implementing
 // github.com/ipfs/go-block-format.Block()
 // Before returning, Close()s the supplied pgx.Rows()
-func (dbbs *PgBlockstore) InflateDbRows(rows pgx.Rows, skipCaching bool) (blocks []*StoredBlock, bytesCached int64, err error) {
+func (dbbs *PgBlockstore) InflateAndCloseDbRows(rows pgx.Rows, skipCaching bool) (blocks []*StoredBlock, bytesCached int64, err error) {
 	defer rows.Close()
 
 	seen := cid.NewSet()

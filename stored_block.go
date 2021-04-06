@@ -17,7 +17,7 @@ import (
 // StoredBlock implements "github.com/ipfs/go-block-format".Block()
 // along with a number of blockstore-specific functionalities. There is no
 // constructor: you get a StoredBlock object via either
-// *PgBlockstore.GetStoredBlock or *PgBlockstore.InflateDbRows
+// *PgBlockstore.GetStoredBlock or *PgBlockstore.InflateAndCloseDbRows
 type StoredBlock struct {
 	size              int32
 	cidValidated      bool
