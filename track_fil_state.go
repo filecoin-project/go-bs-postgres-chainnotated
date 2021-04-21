@@ -76,30 +76,35 @@ func (dbbs *PgBlockstore) FindFilTipSet(ctx context.Context, tipsetCids []cid.Ci
 		`
 		WITH RECURSIVE
 			tipset_walk AS (
-					SELECT t.tipset_ordinal, t.parent_stateroot_cid, 0 AS depth
+					SELECT t.tipset_ordinal, t.parent_stateroot_cid, t.epoch AS epoch_current, t.epoch - $1 AS epoch_target
 						FROM fil_common_base.tipsets t
-					WHERE t.tipset_cids = $1::BYTEA[]
+					WHERE t.tipset_cids = $2::BYTEA[]
 				UNION ALL
-					SELECT parent_tipset.tipset_ordinal, parent_tipset.parent_stateroot_cid, tipset_walk.depth+1 AS depth
+					SELECT parent_tipset.tipset_ordinal, parent_tipset.parent_stateroot_cid, parent_tipset.epoch AS epoch_current, tipset_walk.epoch_target
 						FROM tipset_walk
 						JOIN fil_common_base.states parent_state
 							ON tipset_walk.parent_stateroot_cid = parent_state.stateroot_cid
 						JOIN fil_common_base.tipsets parent_tipset
 							ON parent_state.applied_tipset_cids = parent_tipset.tipset_cids
-					WHERE tipset_walk.depth < $2
+					WHERE tipset_walk.epoch_current > tipset_walk.epoch_target
 			)
 		SELECT t.tipset_cids, t.epoch, t.parent_stateroot_cid, s.basefee, s.weight
 			FROM tipset_walk
 			JOIN fil_common_base.tipsets t
-				ON tipset_walk.depth = $2 AND tipset_walk.tipset_ordinal = t.tipset_ordinal
+				ON tipset_walk.epoch_current = tipset_walk.epoch_target AND tipset_walk.tipset_ordinal = t.tipset_ordinal
 			JOIN fil_common_base.states s
 				ON t.parent_stateroot_cid = s.stateroot_cid
 		`,
-		tskBytes,
 		walkBackEpochs,
+		tskBytes,
 	)
 }
 
+// Takes an SQL selector as a string in the form of:
+// SELECT
+//   tipset_cids, epoch, parent_stateroot_cid, parent_state_basefee, parent_state_weight
+// FROM ...
+// and assembles a DestructuredFilTipSetData if any
 func (dbbs *PgBlockstore) tsdFromQuery(ctx context.Context, sql string, args ...interface{}) (*DestructuredFilTipSetData, error) {
 
 	dts := new(DestructuredFilTipSetData)
