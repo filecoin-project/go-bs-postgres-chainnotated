@@ -208,7 +208,7 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 	// - then auto-SH-lock it going forward
 	if dbbs.isWritable && dbbs.instanceNamespace != "" {
 
-		tableToAdvisoryLock := dbbs.instanceNamespace + `.datablocks_accesslog`
+		tableToAdvisoryLock := dbbs.instanceNamespace + `.datablocks_recent`
 
 		var exLockSuccess bool
 		err = dbbs.dbPool.QueryRow(

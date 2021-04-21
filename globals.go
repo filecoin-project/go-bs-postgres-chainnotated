@@ -39,6 +39,7 @@ const (
 	ObjectExLockStatement         = `SELECT PG_ADVISORY_XACT_LOCK( 140000, TO_REGCLASS( $1 )::INTEGER )` // complete exclusive-lock-by-named-object statement
 	PgLockOidVector               = 140000                                                               // the high-32bit value of 140000 is arbitrarily chosen
 	StoredBlocksInflatorSelection = `cid, block_ordinal, size, content_encoding, content`                // ordered set of columns expected by InflateAndCloseDbRows
+	CidTailBytes                  = 7                                                                    // 56 bits of entropy, compromise on collisions vs index size
 )
 
 const (

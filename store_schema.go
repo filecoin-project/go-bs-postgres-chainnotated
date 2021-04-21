@@ -59,14 +59,15 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 		END $$
 		`,
 
-		`
+		fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS fil_common_base.datablocks(
 
 			block_ordinal BIGINT NOT NULL UNIQUE GENERATED ALWAYS AS IDENTITY,
 			subdag_maxdepth INTEGER CONSTRAINT valid_subdag_maxdepth CHECK ( subdag_maxdepth > 0 OR subdag_maxdepth IS NULL ),
 			size INTEGER CONSTRAINT valid_size CHECK ( size >= 0 OR size IS NULL ),
 			content_encoding SMALLINT REFERENCES fil_common_base.datablocks_content_encodings( encoding ),
-			cid BYTEA NOT NULL UNIQUE,
+			cid BYTEA NOT NULL,
+			cid_tail BYTEA NOT NULL GENERATED ALWAYS AS ( CASE WHEN ( OCTET_LENGTH(cid) <= %d ) THEN ( cid ) ELSE ( SUBSTRING( cid, OCTET_LENGTH(cid) - %d ) ) ) ) STORED,
 			linked_ordinals BIGINT[],
 			content BYTEA,
 
@@ -122,15 +123,19 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 				( linked_ordinals IS NOT NULL AND linked_ordinals = ARRAY[]::BIGINT[] )
 			)
 		)
-		`,
+		`, CidTailBytes, CidTailBytes-1),
 
 		`COMMENT ON CONSTRAINT valid_linked_ordinals ON fil_common_base.datablocks IS 'Eventually this constraint will be replaced with https://www.postgresql-archive.org/GSoC-2017-Foreign-Key-Arrays-tp5962835p6175483.html'`,
 
 		// this table is *MASSIVE*: limit use of TOAST-storage, disable/discourage compression where it makes no sense
 		`ALTER TABLE fil_common_base.datablocks SET ( toast_tuple_target = 8160 )`,
 		`ALTER TABLE fil_common_base.datablocks ALTER COLUMN cid SET STORAGE MAIN`,
+		`ALTER TABLE fil_common_base.datablocks ALTER COLUMN cid_tail SET STORAGE MAIN`,
 		`ALTER TABLE fil_common_base.datablocks ALTER COLUMN linked_ordinals SET STORAGE MAIN`,
 		`ALTER TABLE fil_common_base.datablocks ALTER COLUMN content SET STORAGE EXTERNAL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS datablocks_cid_key_extended ON fil_common_base.datablocks ( cid ) INCLUDE ( block_ordinal, size )`,
+		`ALTER TABLE fil_common_base.datablocks ADD UNIQUE USING INDEX datablocks_cid_key_extended`,
+		`CREATE INDEX IF NOT EXISTS datablocks_cid_tail_idx ON fil_common_base.datablocks ( cid_tail )`,
 		`CREATE INDEX IF NOT EXISTS datablocks_missing_blocks_idx ON fil_common_base.datablocks ( block_ordinal ) WHERE size IS NULL`,
 		`CREATE INDEX IF NOT EXISTS datablocks_links_pending_idx ON fil_common_base.datablocks ( block_ordinal ) WHERE linked_ordinals IS NULL AND size IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS datablocks_subdag_maxdepth_idx ON fil_common_base.datablocks ( subdag_maxdepth )`,
@@ -271,9 +276,7 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 					ON pgschema.oid = pgtable.relnamespace AND pgtable.relkind IN ( 'r', 'm', 'p' )
 			WHERE
 				-- ADJUST HERE to determine which table subset you care about
-				pgschema.nspname LIKE 'fil_%' AND pgschema.nspname NOT LIKE '%_accesslog'
-					AND
-				pgtable.relname NOT LIKE '%_accesslog'
+				pgschema.nspname LIKE 'fil_%'
 			INTO statOIDs;
 
 			max_value_bits = 32; -- both page limits and sort-of tuple-limits are max(uint32)
@@ -352,7 +355,7 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 							n.nspname = isc.table_schema AND t.relname = isc.table_name AND a.attname = isc.column_name
 								AND
 							-- only consider single-key predicate-less ordered indices that can serve a MAX quickly
-							a.attnum = ANY(ix.indkey) AND iam.amname IN ( 'btree', 'brin' ) AND ix.indnkeyatts = 1 AND ix.indpred IS NULL
+							a.attnum = ANY(ix.indkey) AND iam.amname IN ( 'btree' ) AND ix.indnkeyatts = 1 AND ix.indpred IS NULL
 					)
 				ORDER BY table_schema, table_name, column_name
 			)
@@ -383,6 +386,7 @@ func (dbbs *PgBlockstore) commonDDL() []string {
 				pg_size_pretty(data_bytes) AS data_size,
 				pg_size_pretty(index_bytes) AS index_size
 			FROM fil_sysinfo.storage_stats()
+		WHERE object_path[ARRAY_LOWER(object_path, 1)] NOT LIKE '%_accesslog'
 		`,
 
 		`
