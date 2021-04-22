@@ -54,6 +54,7 @@ type PgBlockstore struct {
 	additionalPreloadNamespace string
 	lru                        cidkeyedlru.CidKeyedLRU
 	dbPool                     *pgxpool.Pool
+	shutDown                   sync.Once
 	accessLogsMu               sync.Mutex
 	accessLogsRecent           map[int64]struct{}
 	accessLogsDetailed         map[accessUnit]int64
@@ -78,11 +79,13 @@ func (dbbs *PgBlockstore) Close() error {
 	if dbbs == nil {
 		return nil
 	}
-	log.Infof("shut down of %T(%p) begins", dbbs, dbbs)
-	close(dbbs.shutdownSemaphore)
-	dbbs.dbPool.Close()
-	dbbs.lru.Purge()
-	log.Infof("shut down of %T(%p) completed", dbbs, dbbs)
+	dbbs.shutDown.Do(func() {
+		log.Infof("shut down of %T(%p) begins", dbbs, dbbs)
+		close(dbbs.shutdownSemaphore)
+		dbbs.dbPool.Close()
+		dbbs.lru.Purge()
+		log.Infof("shut down of %T(%p) completed", dbbs, dbbs)
+	})
 	return nil
 }
 

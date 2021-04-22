@@ -291,7 +291,7 @@ func NewPgBlockstore(ctx context.Context, cfg PgBlockstoreConfig) (chainAnnotate
 				case <-shutdownChan:
 					return
 				case <-sigChUSR1:
-					l.(*cidkeyedlru.CKLru).Reallocate() // FIXME: TEMPORARY, remove when sizing is fixed
+					// l.(*cidkeyedlru.CKLru).Reallocate() // FIXME: TEMPORARY, remove when sizing is fixed
 					log.Info(l.StatString())
 				}
 				// drain accumulated stragglers
