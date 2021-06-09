@@ -13,7 +13,7 @@ require (
 	github.com/jackc/pgx/v4 v4.11.0
 	github.com/libp2p/go-buffer-pool v0.0.2
 	github.com/multiformats/go-multihash v0.0.15
-	github.com/valyala/gozstd v1.9.0
+	github.com/valyala/gozstd v1.11.0
 	github.com/whyrusleeping/cbor-gen v0.0.0-20210303213153-67a261a1d291
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1
 )
